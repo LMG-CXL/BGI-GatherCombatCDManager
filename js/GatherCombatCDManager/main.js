@@ -5,7 +5,7 @@ eval(file.readTextSync("lib/inventory.js"));
 const defaultTime = getDefaultTime();
 const enemyCategory = "敌人与魔物";
 const miningCategory = "矿物";
-// BGI 的莉奈娅挖矿动作 & 对应角色（这个动作只能莉奈娅本人放）
+
 const linneaMiningAction = "linnea_mining";
 const linneaMiningChar = "莉奈娅";
 const unknownCd = "24小时";
@@ -16,13 +16,13 @@ const collectAbility = {
     pyro_collect: "火",
     nahida_collect: "纳西妲",
 };
-// 这些“一条龙”类路线不对应单种物品的产出，数量目标对其无效
+
 const unlimitedMaterials = ["莉奈娅一条龙", "爱可菲", "纳塔食材一条龙", "提瓦特食材一条龙", "瓦雷莎家的果园"];
-// 背包物品名与路线文件夹名的别名
+
 const materialAliases = { 晶核: "晶蝶", 冷鲜肉: "「冷鲜肉」" };
-// 路线文件夹名 -> 拾取提示里显示的实际物品名
+
 const obtainedNameMap = { "晶蝶": "晶核", "「冷鲜肉」": "冷鲜肉" };
-// 掉落表里的怪物名与路线文件夹名不一致时的补充对应
+
 const monsterNameAliases = {
     "丘丘暴徒": ["丘丘王"],
     "丘丘人": ["丘丘人射手", "奇怪的丘丘人"],
@@ -34,18 +34,13 @@ const monsterNameAliases = {
     "黯色空壳": ["黑蛇众"],
 };
 
-// 识别账号 UID：必须读到 9 位 UID 才允许执行路线（读不到会一直重试，不再退回“默认账号”）
-// 本次运行中各采集目标的剩余数量，脚本结束时一次性写回配置
 let pendingRemains = {};
 
-// ============ 配置：只用脚本自带的面板（BGI 自带 settings.json 已停用） ============
-// 配置与运行记录放在脚本目录下的独立文件夹（和脚本代码分开，方便单独备份）
-// 注意：BetterGI 0.61+ 的文件 API 是“受限工作区”，只能读写脚本目录内部，
-// 写 C:\ 根目录会被判定“越界访问”直接失败，所以这里必须用脚本目录内的相对路径。
+// BGI 只能读写脚本目录内的文件，别换成绝对路径
 const configDir = "采集CD管理配置文件";
 const configFile = configDir + "\\panel_settings.json";
 const recordRoot = configDir + "\\record";
-// 旧版本的位置，只在第一次自动迁移时读一下
+
 const legacyConfigFile = "panel_settings.json";
 const legacyRecordRoot = "record";
 const panelHtmlFile = "assets/panel.html";
@@ -53,13 +48,10 @@ const panelSlotValues = ["1", "2", "3", "4"];
 const panelHealSlotValues = ["不启用", "1", "2", "3", "4"];
 const panelSkillValues = ["E（短按）", "E（长按）", "Q"];
 const panelOnStartValues = ["每次运行前显示", "不显示（直接用已保存的配置）"];
-const launcherCornerValues = ["左下角", "右下角", "左上角", "右上角"];
 const statusCornerValues = ["左上", "上中", "右上", "左中", "中间", "右中", "左下", "下中", "右下"];
-// 悬浮件自由位置：X/Y 是相对游戏窗口的百分比（元素中心点），scale 是缩放百分比
 const overlayPercentRange = { min: 0, max: 100 };
 const overlayScaleRange = { min: 0, max: 100 };
 
-// 面板里允许保存的配置项（其余键一律不落盘）
 const panelConfigKeys = [
     "targetItems",
     "excludeTimeRange",
@@ -67,11 +59,7 @@ const panelConfigKeys = [
     "routeNotify",
     "runAllAfterTargets",
     "panelOnStart",
-    "launcherCorner",
     "statusCorner",
-    "launcherX",
-    "launcherY",
-    "launcherScale",
     "statusX",
     "statusY",
     "statusScale",
@@ -108,11 +96,7 @@ function defaultPanelConfig() {
         runAllAfterTargets: true,
         panelOnStart: panelOnStartValues[0],
         panelHotkey: "F7",
-        launcherCorner: launcherCornerValues[0],
         statusCorner: statusCornerValues[1],
-        launcherX: "12",
-        launcherY: "88",
-        launcherScale: "100",
         statusX: "50",
         statusY: "14",
         statusScale: "100",
@@ -140,9 +124,6 @@ function defaultPanelConfig() {
     };
 }
 
-/**
- * 把外部传进来的值收敛到合法配置：只保留白名单键，类型/取值做兜底
- */
 function normalizePanelConfig(raw) {
     const base = defaultPanelConfig();
     const out = Object.assign({}, base);
@@ -176,22 +157,15 @@ function normalizePanelConfig(raw) {
             out.panelHotkey = normalizePanelHotkeyName(key);
         }
     }
-    if (raw.launcherCorner !== undefined && launcherCornerValues.includes(String(raw.launcherCorner))) {
-        out.launcherCorner = String(raw.launcherCorner);
-    }
     if (raw.statusCorner !== undefined && statusCornerValues.includes(String(raw.statusCorner))) {
         out.statusCorner = String(raw.statusCorner);
     }
-    // 自由位置/大小：X、Y 是 0-100 的百分比，scale 是 60-200 的百分比
     const bindRange = (key, fallback, min, max) => {
         if (!(key in raw)) return;
         const num = parseInt(String(raw[key]), 10);
         if (Number.isNaN(num)) return;
         out[key] = String(Math.min(max, Math.max(min, num)));
     };
-    bindRange("launcherX", base.launcherX, overlayPercentRange.min, overlayPercentRange.max);
-    bindRange("launcherY", base.launcherY, overlayPercentRange.min, overlayPercentRange.max);
-    bindRange("launcherScale", base.launcherScale, overlayScaleRange.min, overlayScaleRange.max);
     bindRange("statusX", base.statusX, overlayPercentRange.min, overlayPercentRange.max);
     bindRange("statusY", base.statusY, overlayPercentRange.min, overlayPercentRange.max);
     bindRange("statusScale", base.statusScale, overlayScaleRange.min, overlayScaleRange.max);
@@ -205,7 +179,6 @@ function normalizePanelConfig(raw) {
     bind("healSkillCombat", base.healSkillCombat, panelSkillValues);
     bind("healCdCombat", base.healCdCombat, null, true);
 
-    // 多版本路线的勾选值：selectRoute_物品名 -> 版本名数组
     for (const key of Object.keys(raw)) {
         if (!key.startsWith("selectRoute_")) continue;
         const value = raw[key];
@@ -215,7 +188,6 @@ function normalizePanelConfig(raw) {
     return out;
 }
 
-/** 确保配置文件夹存在（脚本目录下的 采集CD管理配置文件） */
 function ensureConfigDir() {
     try {
         if (!file.isExists(configDir)) {
@@ -241,7 +213,7 @@ function readPanelConfigFile() {
             const text = file.readTextSync(configFile);
             if (text && text.trim()) return JSON.parse(text);
         }
-        // 第一次升级：把旧位置（脚本目录）里的配置搬过来
+
         if (file.isExists(legacyConfigFile)) {
             const text = file.readTextSync(legacyConfigFile);
             if (text && text.trim()) {
@@ -275,7 +247,6 @@ function loadPanelConfigFile() {
     return normalizePanelConfig(stored);
 }
 
-// 本次运行使用的配置对象（原 settings.json 的所有引用都改为读它）
 const cfg = loadPanelConfigFile();
 
 function publicPanelConfig() {    const out = {};
@@ -286,10 +257,6 @@ function publicPanelConfig() {    const out = {};
     return out;
 }
 
-/**
- * 面板提交的配置写回 cfg 并落盘到 panel_settings.json
- * 支持两种入参：{ settings: {...} }（面板消息里的 data）或直接 {...}
- */
 function applyPanelConfig(payload) {
     if (!payload || typeof payload !== "object") return;
     const incoming = payload.settings && typeof payload.settings === "object" ? payload.settings : payload;
@@ -297,8 +264,7 @@ function applyPanelConfig(payload) {
     for (const key of Object.keys(normalized)) {
         cfg[key] = normalized[key];
     }
-    // 面板里清空的路线勾选要真正删掉，否则旧值会残留在文件里
-    // 只有面板确实加载了路线列表（routeReady）时才清理，避免面板没初始化好就把勾选全删了
+
     if (payload.routeReady) {
         for (const key of Object.keys(cfg)) {
             if (key.startsWith("selectRoute_") && !(key in incoming)) delete cfg[key];
@@ -317,7 +283,6 @@ function persistPanelConfig() {
     }
 }
 
-// ============ 游戏内配置面板（htmlMask） ============
 function isPanelSupported() {
     try {
         return typeof htmlMask !== "undefined" && htmlMask !== null && typeof htmlMask.show === "function";
@@ -326,9 +291,6 @@ function isPanelSupported() {
     }
 }
 
-/**
- * 汇总“有多个版本”的材料，交给面板勾选（未勾选 = 每个物品只跑第一组）
- */
 function panelRouteGroups(index) {
     const list = [];
     for (const entry of Object.values(index)) {
@@ -341,15 +303,9 @@ function panelRouteGroups(index) {
     return list;
 }
 
-/**
- * 弹出游戏内配置面板：
- * 返回 true = 用户点了「开始运行」；false = 用户关闭了面板（本次不跑）
- */
-// ============ 常驻悬浮按钮（游戏右下角） ============
-const launcherHtmlFile = "assets/launcher.html";
-// 配置面板快捷键：与 BGI 的暂停快捷键一致时，按一下既暂停 BGI 又打开本面板
 const panelHotkeyDefault = "F7";
-// 物理键名（KeyboardEvent.code）→ Windows 虚拟键码；覆盖 104 键盘常用键与小键盘
+
+// KeyboardEvent.code -> Windows 虚拟键码
 const panelHotkeyVkMap = {
     Escape: 27, Tab: 9, CapsLock: 20, Space: 32, Backspace: 8, Enter: 13,
     Insert: 45, Delete: 46, Home: 36, End: 35, PageUp: 33, PageDown: 34,
@@ -379,12 +335,12 @@ function normalizePanelHotkeyName(name) {
     if (/^F([1-9]|1[0-2])$/i.test(key) || /^[A-Za-z]$/.test(key) || /^[0-9]$/.test(key)) {
         return key.toUpperCase();
     }
-    return key; // KeyA / Digit1 / Numpad1 / PageUp 等保持原样
+    return key;
 }
 function panelHotkeyCode() {
     const raw = String(cfg.panelHotkey || panelHotkeyDefault).trim();
     const fn = raw.match(/^F([1-9]|1[0-2])$/i);
-    if (fn) return 111 + parseInt(fn[1], 10); // F1=112 … F12=123
+    if (fn) return 111 + parseInt(fn[1], 10);
     const letter = raw.match(/^(?:Key)?([A-Z])$/i);
     if (letter) return letter[1].toUpperCase().charCodeAt(0);
     const digit = raw.match(/^(?:Digit)?([0-9])$/);
@@ -392,18 +348,16 @@ function panelHotkeyCode() {
     if (Object.prototype.hasOwnProperty.call(panelHotkeyVkMap, raw)) return panelHotkeyVkMap[raw];
     const lower = raw.charAt(0).toLowerCase() + raw.slice(1);
     if (Object.prototype.hasOwnProperty.call(panelHotkeyVkMap, lower)) return panelHotkeyVkMap[lower];
-    return 118; // 兜底 F7
+    return 118;
 }
 
 const panelService = {
     running: false,
-    launcherId: null,
     panelId: null,
     openRequested: false,
     pauseRequested: false,
     restartRequested: false,
     stopRequested: false,
-    viewport: { w: 1920, h: 1080 },
     hook: null,
     index: null,
     lastPushAt: 0,
@@ -415,7 +369,6 @@ const panelService = {
     skipMaskClose: false,
 };
 
-/** 路线跑到一半时被面板要求“按新配置重来” */
 class RestartRequested extends Error {
     constructor(message) {
         super(message || "配置已更新");
@@ -432,22 +385,20 @@ function taskStopped() {
     }
 }
 
-/** 面板里的「结束脚本」：能拿到调度器取消源就直接取消（等同 F10），拿不到就靠检查点退出 */
 function stopScriptFromPanel() {
     panelService.stopRequested = true;
     panelService.pauseRequested = false;
     panelService.restartRequested = false;
     panelService.running = false;
     log.info("配置面板：用户点击结束脚本，正在停止");
-    // 不在这里 closeAll：服务循环可能正阻塞在 receive 上，直接释放窗口会刷 ObjectDisposedException；
-    // 交给 runPanelServiceLoop 退出后的 shutdownPanelService 统一关闭
+
     try {
         if (panelService.hook) {
             panelService.hook.dispose();
             panelService.hook = null;
         }
     } catch (e) {
-        // ignore
+
     }
     try {
         if (typeof dispatcher !== "undefined" && dispatcher && typeof dispatcher.getLinkedCancellationTokenSource === "function") {
@@ -459,50 +410,22 @@ function stopScriptFromPanel() {
     }
 }
 
-/** 读配置里的数字（允许 0），失败用兜底 */
 function cfgNum(key, fallback) {
     const num = parseFloat(cfg[key]);
     return Number.isFinite(num) ? num : fallback;
 }
 
-
-/** 悬浮按钮位置：固定屏幕左下角 */
-function launcherConfigPayload() {
-    return JSON.stringify({
-        x: 9, y: 93, scale: 1,
-        hotkey: String(cfg.panelHotkey || panelHotkeyDefault),
-    });
-}
-
-/** 悬浮按钮的点击命中区域：固定左下角（同时兼容 1920x1080 逻辑坐标和浏览器 CSS 像素） */
-function isLauncherHit(x, y) {
-    const cx = 0.09;
-    const cy = 0.93;
-    const halfW = 105;
-    const halfH = 34;
-    const inBox = (w, h) => {
-        const px = cx * w;
-        const py = cy * h;
-        return x >= px - halfW && x <= px + halfW && y >= py - halfH && y <= py + halfH;
-    };
-    if (inBox(1920, 1080)) return true;
-    const vw = Number(panelService.viewport.w) || 0;
-    const vh = Number(panelService.viewport.h) || 0;
-    if (vw > 0 && vh > 0 && inBox(vw, vh)) return true;
-    return false;
-}
-
 function requestOpenPanel() {
     if (!panelService.running) return;
     if (panelService.panelId) return;
-    // 执行路径中按快捷键：直接打开面板（与 BGI 暂停快捷键一致时，BGI 自身也暂停），
-    // 同时把本条路线判为中断：不记 CD、不扣数量
+
     if (panelService.executing && panelService.routeRunning) {
+        // 面板一开，这条路线就当没跑过
         panelService.abortedRoute = true;
         statusState.note = "已按配置快捷键：当前路线中断（不记 CD、不扣数量）";
         updateStatusSoon();
     }
-    // 先写盘，再请求打开：保证面板拿到的就是最新剩余数量
+
     syncTargetRemainBeforePanel();
     panelService.openRequested = true;
 }
@@ -527,7 +450,7 @@ function pushPanelInit() {
 
 function openPanelWindow() {
     panelService.openRequested = false;
-    // 打开面板前再兜底同步一次（正常在快捷键触发时已经写过）
+
     syncTargetRemainBeforePanel();
     try {
         const id = htmlMask.show(panelHtmlFile);
@@ -538,23 +461,15 @@ function openPanelWindow() {
         panelService.panelId = id;
         panelService.pauseRequested = false;
         statusState.note = "";
-        // 跑图过程中打开面板：本次路线作废，不记 CD、不扣数量，避免“暂停后继续”卡死/焦点丢失
+
         if (panelService.executing && panelService.routeRunning) {
             panelService.abortedRoute = true;
         }
         try {
             htmlMask.setClickThrough(id, false);
         } catch (e) {
-            // ignore
+
         }
-        if (panelService.launcherId && htmlMask.exists(panelService.launcherId)) {
-            try {
-                htmlMask.send(panelService.launcherId, "/launcher/hide", "{}");
-            } catch (e) {
-                // ignore
-            }
-        }
-        // 先把面板配置推过去，保证面板一定能显示内容；再做悬浮件预览（失败也不影响面板）
         pushPanelInit();
         try {
             ensureOverlaysVisible();
@@ -573,24 +488,14 @@ function closePanelWindow() {
     const id = panelService.panelId;
     panelService.panelId = null;
     endOverlayPreview();
-    // 不再提供“收缩/左下角按钮”，关闭面板就只关面板
-    if (panelService.launcherId) {
-        try {
-            htmlMask.close(panelService.launcherId);
-        } catch (e) {
-            // ignore
-        }
-        panelService.launcherId = null;
-    }
     if (!id) return;
     try {
         htmlMask.close(id);
     } catch (e) {
-        // ignore
+
     }
 }
 
-/** 处理面板发来的消息；执行「开始执行 / 结束脚本」后由服务循环继续 */
 function handlePanelMessage(raw) {
     let message = null;
     try {
@@ -617,19 +522,12 @@ function handlePanelMessage(raw) {
         handlePreviewPosition(data);
         return;
     }
-    if (url === "/panel/overlayPos") return; // 面板 → 脚本方向用不到
+    if (url === "/panel/overlayPos") return;
     if (url === "/panel/previewHotkey") {
         const key = String((data && data.panelHotkey) || "").trim();
         if (isValidPanelHotkeyName(key)) {
             cfg.panelHotkey = normalizePanelHotkeyName(key);
             log.info("配置面板快捷键已临时改为 {0}（点保存配置后长期保留）", key);
-            if (panelService.launcherId && htmlMask.exists(panelService.launcherId)) {
-                try {
-                    htmlMask.send(panelService.launcherId, "/launcher/config", launcherConfigPayload());
-                } catch (e) {
-                    // ignore
-                }
-            }
         }
         return;
     }
@@ -640,7 +538,7 @@ function handlePanelMessage(raw) {
         try {
             htmlMask.send(panelService.panelId, "/panel/toast", JSON.stringify({ text: ok ? "已保存（长时间保留）" : "保存失败，看日志" }));
         } catch (e) {
-            // ignore
+
         }
         log.info("配置面板：配置已保存到 {0}", configFile);
         return;
@@ -675,7 +573,7 @@ function handlePanelMessage(raw) {
         try {
             hideStatusWindow();
         } catch (e) {
-            // ignore
+
         }
         stopScriptFromPanel();
         return;
@@ -691,25 +589,7 @@ async function runPanelServiceLoop() {
                     openPanelWindow();
                     continue;
                 }
-                if (panelService.launcherId && htmlMask.exists(panelService.launcherId)) {
-                    const raw = await htmlMask.receive(panelService.launcherId, 350);
-                    if (raw) {
-                        try {
-                            const msg = JSON.parse(raw);
-                            if (msg && msg.url === "/launcher/ready" && msg.data) {
-                                let info = msg.data;
-                                if (typeof info === "string") info = JSON.parse(info);
-                                if (info && info.w && info.h) {
-                                    panelService.viewport = { w: Number(info.w), h: Number(info.h) };
-                                }
-                            }
-                        } catch (e) {
-                            // ignore
-                        }
-                    }
-                } else {
-                    await sleep(350);
-                }
+                await sleep(350);
                 continue;
             }
             if (!htmlMask.exists(panelService.panelId)) {
@@ -722,29 +602,13 @@ async function runPanelServiceLoop() {
             handlePanelMessage(raw);
         } catch (e) {
             const msg = e && e.message ? String(e.message) : String(e || "");
-            // 窗口被宿主释放（F10/BGI 停止、面板关闭）时不再对已释放对象重试
+
             if (panelService.stopRequested || !panelService.running || /disposed|已释放|ObjectDisposed/i.test(msg) || isCancelError(e) || taskStopped()) break;
             log.debug("配置面板服务异常: {0}", msg);
             await sleep(300);
         }
     }
     shutdownPanelService();
-}
-
-/** 创建（或重建）配置按钮窗口，并把当前位置/大小发过去 */
-function showLauncherWindow() {
-    try {
-        panelService.launcherId = htmlMask.show(launcherHtmlFile);
-        try {
-            htmlMask.setClickThrough(panelService.launcherId, true);
-        } catch (e) {
-            // ignore
-        }
-        htmlMask.send(panelService.launcherId, "/launcher/config", launcherConfigPayload());
-    } catch (e) {
-        log.warn("显示悬浮按钮失败: {0}", e.toString());
-        panelService.launcherId = null;
-    }
 }
 
 function startPanelService(index) {
@@ -761,7 +625,7 @@ function startPanelService(index) {
     let hook = null;
     try {
         hook = new KeyMouseHook();
-        panelService.hook = hook; // 先存住引用，避免后续注册出错时对象被回收导致快捷键失效
+        panelService.hook = hook;
     } catch (e) {
         log.warn("创建全局键鼠钩子失败（配置面板快捷键用不了）: {0}", e.toString());
     }
@@ -807,16 +671,7 @@ function startPanelService(index) {
         try {
             hook.onKeyUp(handleKey);
         } catch (e) {
-            // ignore
-        }
-        try {
-            hook.onMouseDown((button, x, y) => {
-                const name = String(button || "");
-                if (name && !/left/i.test(name)) return;
-                if (!panelService.panelId && isLauncherHit(Number(x), Number(y))) requestOpenPanel();
-            });
-        } catch (e) {
-            log.warn("注册鼠标钩子失败（左下角按钮点击可能无效）: {0}", e.toString());
+
         }
     }
     runPanelServiceLoop().catch((e) => log.debug("面板服务退出: {0}", e.toString()));
@@ -833,26 +688,21 @@ function shutdownPanelService() {
             panelService.hook = null;
         }
     } catch (e) {
-        // ignore
+
     }
     try {
-        // 任务已被 F10/宿主停止时，窗口由宿主回收，不再主动 closeAll，避免 ObjectDisposedException
+
         if (!panelService.skipMaskClose) {
             htmlMask.closeAll();
         }
     } catch (e) {
-        // ignore
+
     }
 }
 
-/**
- * 路线之间的检查点：不暂停正在跑的路径。
- * 面板若还开着，就在两条路线之间等用户点「开始执行」或关掉面板；
- * 不会因为“暂停了又继续”导致后续不传送/不动作、或提示聚焦点不在原神。
- */
 async function waitBeforeNextRoute() {
     if (taskStopped()) throw new UserCancelled("任务已被停止");
-    // 执行中按过 F7：等面板真正打开（服务循环每 350ms 处理一次），避免下一条路线刚起步又被抢焦点
+
     while (panelService.pendingOpen && !panelService.panelId) {
         if (taskStopped()) throw new UserCancelled("用户从配置面板结束脚本");
         await sleep(200);
@@ -866,7 +716,6 @@ async function waitBeforeNextRoute() {
     if (panelService.restartRequested) throw new RestartRequested("配置已更新");
 }
 
-// ============ 路线执行悬浮窗（当前路线 / 进度条 / 采集目标） ============
 const statusHtmlFile = "assets/status.html";
 const statusState = {
     active: false,
@@ -893,7 +742,7 @@ function formatDuration(ms) {
 }
 
 function beijingNowText() {
-    // 北京时间固定 UTC+8，不依赖系统时区
+
     const d = new Date(Date.now() + 8 * 3600 * 1000);
     const pad = (n) => (n < 10 ? "0" + n : String(n));
     return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()) +
@@ -901,7 +750,7 @@ function beijingNowText() {
 }
 
 function statusPayload() {
-    let percent = -1; // -1 = 进度不确定（不限量 / 还没开始扣数量）
+    let percent = -1;
     if (statusState.targetCount !== null && statusState.targetCount > 0) {
         const remain = statusState.remain === null ? statusState.targetCount : statusState.remain;
         const done = Math.max(0, statusState.targetCount - remain);
@@ -934,7 +783,7 @@ function pushStatus() {
         htmlMask.send(statusService.winId, "/status/update", JSON.stringify(statusPayload()));
         statusService.lastPushAt = Date.now();
     } catch (e) {
-        // ignore
+
     }
 }
 
@@ -971,7 +820,7 @@ function startStatusWindow() {
     try {
         htmlMask.setClickThrough(id, true);
     } catch (e) {
-        // ignore
+
     }
     statusService.lastPushAt = 0;
     runStatusLoop().catch((e) => log.debug("路线悬浮窗退出: {0}", e.toString()));
@@ -986,11 +835,10 @@ function hideStatusWindow() {
     try {
         htmlMask.close(id);
     } catch (e) {
-        // ignore
+
     }
 }
 
-/** 只临时应用“位置/大小”配置项（用于面板里的实时调整，不落盘） */
 function handlePreviewPosition(data) {
     let incoming = data;
     if (incoming && typeof incoming === "object" && incoming.settings) incoming = incoming.settings;
@@ -1002,9 +850,6 @@ function handlePreviewPosition(data) {
         }
     }
     if (!incoming || typeof incoming !== "object") return;
-    if (incoming.launcherCorner && launcherCornerValues.includes(String(incoming.launcherCorner))) {
-        cfg.launcherCorner = String(incoming.launcherCorner);
-    }
     if (incoming.statusCorner && statusCornerValues.includes(String(incoming.statusCorner))) {
         cfg.statusCorner = String(incoming.statusCorner);
     }
@@ -1014,15 +859,11 @@ function handlePreviewPosition(data) {
         if (Number.isNaN(num)) return;
         cfg[key] = String(Math.min(max, Math.max(min, num)));
     };
-    takeRange("launcherX", 0, 100);
-    takeRange("launcherY", 0, 100);
-    takeRange("launcherScale", 0, 100);
     takeRange("statusX", 0, 100);
     takeRange("statusY", 0, 100);
     takeRange("statusScale", 0, 100);
-    // 面板开着时实时生效：按钮和悬浮窗都直接挪，不需要重建窗口（重建会让大小闪一下）
     if (panelService.panelId && htmlMask.exists(panelService.panelId)) {
-        if (!statusService.winId || !panelService.launcherId || !htmlMask.exists(panelService.launcherId)) {
+        if (!statusService.winId) {
             ensureOverlaysVisible();
         }
     }
@@ -1030,16 +871,8 @@ function handlePreviewPosition(data) {
     pushStatus();
 }
 
-/** 面板里改“悬浮窗位置”时：立刻把两个悬浮窗挪过去，方便直接看位置 */
 function applyOverlayCorns() {
     if (!isPanelSupported()) return;
-    if (panelService.launcherId && htmlMask.exists(panelService.launcherId)) {
-        try {
-            htmlMask.send(panelService.launcherId, "/launcher/config", launcherConfigPayload());
-        } catch (e) {
-            // ignore
-        }
-    }
     if (statusService.winId) {
         try {
             htmlMask.send(statusService.winId, "/status/config", JSON.stringify({
@@ -1049,30 +882,11 @@ function applyOverlayCorns() {
                 scale: cfgNum("statusScale", 100) / 100,
             }));
         } catch (e) {
-            // ignore
+
         }
     }
 }
 
-/** 把按钮窗口重建一次，保证它在配置面板上面（htmlMask 后创建的窗口在上层） */
-function reshowLauncher() {
-    if (!panelService.launcherId) return;
-    try {
-        htmlMask.close(panelService.launcherId);
-    } catch (e) {
-        // ignore
-    }
-    try {
-        panelService.launcherId = htmlMask.show(launcherHtmlFile);
-        htmlMask.setClickThrough(panelService.launcherId, true);
-        htmlMask.send(panelService.launcherId, "/launcher/config", launcherConfigPayload());
-        htmlMask.send(panelService.launcherId, "/launcher/show", "{}");
-    } catch (e) {
-        log.debug("重建配置按钮失败: {0}", e.toString());
-    }
-}
-
-/** 配置面板打开期间：按钮 + 进度悬浮窗始终可见（没有真实运行时显示示例数据） */
 function ensureOverlaysVisible() {
     if (!isPanelSupported()) return;
     if (!statusService.winId) {
@@ -1089,14 +903,13 @@ function ensureOverlaysVisible() {
         statusService.previewOnly = true;
         startStatusWindow();
     } else {
-        // 已有真实运行中的悬浮窗：保持原样，不关闭重建，避免多闪一个窗口抢焦点
+
         statusService.running = true;
     }
     applyOverlayCorns();
     pushStatus();
 }
 
-/** 结束配置面板里的常驻预览（点开始执行 / 结束 / 关闭时调用） */
 function endOverlayPreview() {
     if (statusService.previewOnly) {
         hideStatusWindow();
@@ -1104,13 +917,6 @@ function endOverlayPreview() {
     }
 }
 
-
-/**
- * 运行前的配置面板：脚本在这里“挂住”等用户操作。
- * - 点「开始执行」→ 返回 true，进入采集
- * - 点「结束脚本」/F10 → 抛 UserCancelled，脚本结束
- * - 点 × 关闭面板 → 不结束脚本，退到后台待命，按钮一直显示；按 F7 或点按钮可再次打开
- */
 async function showConfigPanel(index) {
     if (!isPanelSupported()) {
         log.warn("当前 BetterGI 不支持游戏内面板（需要 0.61 及以上），本次直接使用已保存的配置");
@@ -1132,8 +938,6 @@ async function showConfigPanel(index) {
     return true;
 }
 
-
-// 拾取提示（F 图标 + 物品名）识别区域，坐标对应 1920x1080、缩放 1.25
 const pickupIcon = { x: 1102, y: 335, width: 34, height: 400 };
 const pickupText = { x: 1210, width: 202, height: 40 };
 
@@ -1144,9 +948,9 @@ let worldInfo = null;
 let partyAbility = {};
 let account = "";
 const recordCache = {};
-// 拾取时用于“这算不算可拾取物品”的白名单，避免对 NPC/机关乱按 F
+
 let pickupWhitelist = [];
-// 当前 BGI 是否支持本脚本的拾取识别（素材缺失时降级）
+
 let pickupCounterReady = false;
 const enemyRefreshRules = loadEnemyRefreshRules();
 const { monsterToDrops, dropToMonsters } = loadMonsterDropMap();
@@ -1163,7 +967,7 @@ class UserCancelled extends Error {
         this.name = "UserCancelled";
     }
 }
-// 前置条件不满足（如连续 3 次读不到账号 UID），直接结束脚本
+
 class FatalStop extends Error {
     constructor(message) {
         super(message);
@@ -1171,10 +975,6 @@ class FatalStop extends Error {
     }
 }
 
-/**
- * BGI 任务被外部停止（“结束任务”快捷键等）时，脚本的取消令牌会变成已取消，
- * 但 pathingScript 的 Promise 不会兑现，脚本就会一直挂着。这里据此提前结束。
- */
 function linkedCancelToken() {
     try {
         if (typeof dispatcher === "undefined" || !dispatcher || !dispatcher.getLinkedCancellationToken) return null;
@@ -1194,28 +994,18 @@ function isTaskCancelled() {
     }
 }
 
-/**
- * 判断异常是不是“任务已被停止”引起的（BGI 停止任务后多数宿主调用会以此报错）
- */
 function isCancelError(error) {
     if (isTaskCancelled()) return true;
     const msg = error && error.message ? error.message : String(error || "");
     return /取消|停止|中止|cancel|Cancel|aborted|abort/i.test(msg);
 }
 
-/**
- * 异常里带取消语义时直接结束脚本，绝不能吞掉
- * （以前吞掉会导致“继续调下一个宿主接口 → 又抛 → 又吞”的死循环，看起来就是按了停止后卡住不结束）
- */
 function throwIfCancelled(error) {
     if (error && isCancelError(error)) {
         throw new UserCancelled(error.message ? error.message : "任务已被停止");
     }
 }
 
-/**
- * 关键节点上的停止检查：任务已被停止就直接抛 UserCancelled，别再往下调宿主接口
- */
 function checkStop(where) {
     if (panelService && panelService.stopRequested) {
         throw new UserCancelled(where ? "用户从配置面板结束脚本（" + where + "）" : "用户从配置面板结束脚本");
@@ -1224,17 +1014,12 @@ function checkStop(where) {
     throw new UserCancelled(where ? "任务已被停止（" + where + "）" : "任务已被停止");
 }
 
-/**
- * 给任何 await 加一个上限，避免 BGI 任务被停止后某个调用永不返回、把脚本整个卡死
- * 返回 { ok, value } / { ok:false, error } / { ok:false, timeout:true }
- * 取消类错误一律直接抛出 UserCancelled，不再继续往下跑
- */
 async function withTimeout(promise, ms, label) {
     const timer = (async () => {
         try {
             await sleep(ms);
         } catch (e) {
-            // 连 sleep 都被取消，说明任务已经停了
+
             return { ok: false, timeout: true, cancelled: true };
         }
         return { ok: false, timeout: true };
@@ -1251,9 +1036,6 @@ async function withTimeout(promise, ms, label) {
     return result;
 }
 
-/**
- * 带兜底的“回到主界面”：BGI 任务被停止后这个调用常常一直不返回，这里最多等 6 秒
- */
 async function safeReturnMainUi(ms) {
     if (isTaskCancelled()) throw new UserCancelled("任务已被停止");
     const timeout = ms || 6000;
@@ -1265,18 +1047,16 @@ async function safeReturnMainUi(ms) {
     setGameMetrics(1920, 1080, 1.25);
     const startTime = logFakeScriptStart();
 
-    // 停止看门：F10 后不管主流程卡在哪个宿主调用里，这里都能在 400ms 内让脚本结束。
-    // 以前的写法只要某个宿主接口永不返回，整个脚本就永远挂着，BGI 的「运行」按钮一直灰。
     let flowDone = false;
+    // 主流程可能卡在某个宿主调用里，这里单独盯取消
     const stopWatch = (async () => {
         while (!flowDone) {
-            // 面板「结束脚本」只改脚本内的 stopRequested，不改宿主取消令牌；
-            // 这里必须一起判断，否则主流程卡在宿主调用时永远等不到结束
+
             if (isTaskCancelled() || panelService.stopRequested) return "cancel";
             try {
                 await sleep(400);
             } catch (e) {
-                return "cancel"; // sleep 被取消 = 任务已停止
+                return "cancel";
             }
         }
         return "idle";
@@ -1294,12 +1074,12 @@ async function safeReturnMainUi(ms) {
             } else if (e instanceof FatalStop) {
                 log.error("{0}，脚本结束", e.message);
             } else if (isTaskCancelled() || isCancelError(e)) {
-                // 任务被停止时宿主抛出的其它异常也按“用户取消”收尾，不再当错误抛回去
+
                 log.info("用户取消，终止运行（{0}）", e && e.message ? e.message : e.toString());
             } else {
                 log.error("脚本运行出错: {0}", e && e.message ? e.message : e.toString());
                 if (e && e.stack) log.error("错误堆栈: {0}", e.stack);
-                // 不再把异常抛回给 BGI，避免弹“发生致命错误”；脚本按出错结束，日志里保留原因
+
             }
         } finally {
             try {
@@ -1314,10 +1094,9 @@ async function safeReturnMainUi(ms) {
     try {
         const winner = await Promise.race([flow.then(() => "done"), stopWatch]);
         if (winner === "cancel") {
-            // 主流程还卡在某个宿主调用里，这里直接结束，保证「运行」按钮立刻可用
+
             log.info("检测到任务已停止，脚本结束");
-            // F10 后宿主自己会回收 HTML 遮罩窗口；这里不要再 closeAll/close，否则会对已释放的
-            // WebView2 再操作，日志刷 ObjectDisposedException 并弹“发生致命错误”
+
             panelService.running = false;
             panelService.stopRequested = true;
             panelService.skipMaskClose = true;
@@ -1329,7 +1108,7 @@ async function safeReturnMainUi(ms) {
                     panelService.hook = null;
                 }
             } catch (e) {
-                // ignore
+
             }
             try {
                 flushTargetItems();
@@ -1338,24 +1117,21 @@ async function safeReturnMainUi(ms) {
             }
         }
     } catch (e) {
-        // flow 内部已记录日志并完成收尾，这里兜底，保证异常不会抛回宿主
+
         log.debug("运行结束: {0}", e && e.message ? e.message : String(e));
     }
 })();
 
-/**
- * 收尾：全部 try/catch，被停止时不因为收尾的宿主调用再次把脚本卡住
- */
 function finishUp(startTime) {
     try {
         shutdownPanelService();
     } catch (e) {
-        // ignore
+
     }
     try {
         hideStatusWindow();
     } catch (e) {
-        // ignore
+
     }
     try {
         flushTargetItems();
@@ -1365,11 +1141,9 @@ function finishUp(startTime) {
     try {
         logFakeScriptEnd({ startTime: startTime });
     } catch (e) {
-        // ignore
+
     }
 }
-
-// ============ 主流程 ============
 
 async function runGatherMode() {
     let firstPass = !String(cfg.panelOnStart || "").startsWith("不显示");
@@ -1414,7 +1188,6 @@ async function runGatherPass(showPanel) {
     panelService.startRequested = false;
     panelService.pauseRequested = false;
 
-    // 悬浮按钮/面板服务：跑图期间常驻，点按钮或按 F7 随时打开配置
     startPanelService(index);
     panelService.executing = true;
     panelService.startRequested = false;
@@ -1459,7 +1232,7 @@ async function runGatherPass(showPanel) {
     if (worldInfo.coOpMode) {
         log.info("当前处于联机模式，不执行队伍切换");
     } else {
-        // 前面刚传送到神像了（tpResult.ok 时人就在神像旁），不用再传一次
+
         const partyResult = await withTimeout(switchPartySafely(cfg.partyName, tpResult.ok), 90000, "切换采集队伍");
         if (!partyResult.ok) log.warn("切换采集队伍未正常返回，继续后续流程");
         currentParty = cfg.partyName;
@@ -1469,7 +1242,7 @@ async function runGatherPass(showPanel) {
     if (pickupCounterReady) {
         log.info("已启用拾取识别计数：边跑路边读拾取提示，拾到目标物品即扣减数量");
     } else {
-        // 识别素材缺失时退回 BGI 自带的自动拾取，数量按“完成一条路线计 1”
+
         dispatcher.addTimer(new RealtimeTimer("AutoPick"));
         log.warn("拾取识别不可用（assets/F_Dialogue.png 缺失或被修改），本次改用BGI自动拾取，数量按路线计1");
     }
@@ -1490,9 +1263,6 @@ async function runGatherPass(showPanel) {
     }
 }
 
-/**
- * 无目标模式：按 地方特产 → 矿物 → 食材与炼金 → 敌人与魔物 的顺序把已订阅路线全部跑一遍（已在CD的自动跳过）
- */
 async function runAllRoutes(index) {
     const allEntries = sortEntriesForRunAll(index);
     log.info("共有 {0} 种材料/怪物可执行，按 地方特产 → 矿物 → 食材与炼金 → 敌人与魔物 的顺序执行", allEntries.length);
@@ -1504,9 +1274,6 @@ async function runAllRoutes(index) {
     log.info("全部路线已执行完毕，所有路线均已进入CD");
 }
 
-/**
- * 空目标模式下按类别顺序列出全部材料/怪物
- */
 function sortEntriesForRunAll(index) {
     const order = ["地方特产", "矿物", "食材与炼金", enemyCategory];
     const rank = (entry) => {
@@ -1518,7 +1285,7 @@ function sortEntriesForRunAll(index) {
 }
 
 async function getAccount() {
-    // 必须真正读到 9 位 UID 才能继续跑图：读不到就一直重试，绝不退回“默认账号”
+    // 必须读到 9 位 UID，读不到就一直重试，不拿默认账号顶替
     let name = "";
     let attempt = 0;
     while (!name) {
@@ -1533,7 +1300,7 @@ async function getAccount() {
         const info = result.ok ? result.value : null;
         if (info && info.maskUid) {
             worldInfo = info;
-            // 使用掩码后的UID作为账户名，避免浮窗和日志等意外暴露用户UID
+
             name = info.maskUid;
             break;
         }
@@ -1543,8 +1310,6 @@ async function getAccount() {
     log.info("已读取到账号 UID: {0}（掩码显示），记录保存在 record\\{0}", name);
     return name;
 }
-
-// ============ 拾取识别（数量扣减的唯一来源） ============
 
 function canUsePickupCounter() {
     try {
@@ -1556,9 +1321,6 @@ function canUsePickupCounter() {
     }
 }
 
-/**
- * 可拾取物品白名单：所有已订阅材料 / 怪物 / 怪物掉落物，以及采集后实际获得的名字
- */
 function buildPickupWhitelist(index) {
     const names = new Set();
     for (const name of Object.keys(index)) names.add(name);
@@ -1576,9 +1338,6 @@ function normalizePickupText(text) {
     return String(text || "").replace(pickupTextNoise, "");
 }
 
-/**
- * 在名字列表里找出与 OCR 文本对应的物品名；先精确/包含匹配，再容忍少量识别误差
- */
 function matchPickupName(text, names) {
     if (!names || names.length === 0) return null;
     const target = normalizePickupText(text);
@@ -1589,7 +1348,7 @@ function matchPickupName(text, names) {
         const key = normalizePickupText(name);
         if (!key) continue;
         if (target === key) return name;
-        // 提示文本常带“拾取”等前缀，取最长的包含匹配，避免“史莱姆”抢掉“史莱姆凝液”
+
         if (target.includes(key) && key.length > bestKeyLength) {
             best = name;
             bestKeyLength = key.length;
@@ -1620,10 +1379,6 @@ function stringSimilarity(a, b) {
     return dp[len1][len2] / Math.max(len1, len2);
 }
 
-/**
- * 跑图过程中并发运行：识别右侧 F 拾取提示，读出物品名 -> 自己按 F 拾取 -> 命中目标就扣 1
- * 这样数量的来源是“真实拾到的东西”，不再依赖路线文件名或背包差值
- */
 async function runPickupWatcher(state) {
     let iconRo;
     try {
@@ -1659,7 +1414,7 @@ async function runPickupWatcher(state) {
                 const rawText = (texts[i].text || "").trim();
                 if (!rawText) continue;
                 const now = Date.now();
-                // 同一条提示会在多帧里重复出现，短时间内同名同位置只算一次
+                // 同一条提示会在多帧里出现，350ms 内同名同位置只算一次
                 if (rawText === lastPress.text && Math.abs(icon.y - lastPress.y) < 15 && now - lastPress.time < 350) {
                     acted = true;
                     break;
@@ -1686,26 +1441,20 @@ async function runPickupWatcher(state) {
             }
             if (!acted) await sleep(80);
         } catch (e) {
-            // 任务被停止时截图/OCR 会一直报取消错误，这里必须收尾，否则会空转死循环
+
             if (isCancelError(e)) return;
             log.debug("拾取识别异常: {0}", e.toString());
         } finally {
             try {
                 if (frame && frame.dispose) frame.dispose();
             } catch (e) {
-                // ignore
+
             }
         }
         if (state.remain !== null && state.remain <= 0) return;
     }
 }
 
-// ============ 怪物掉落表（支持用掉落物名定位怪物） ============
-
-/**
- * 读取 assets/怪物掉落.txt，格式: 怪物名[/别名]：掉落1，掉落2，掉落3
- * 同时建立 怪物->掉落物 与 掉落物->怪物 两个方向的映射
- */
 function loadMonsterDropMap() {
     const monsterToDrops = {};
     const dropToMonsters = {};
@@ -1739,14 +1488,6 @@ function loadMonsterDropMap() {
     return { monsterToDrops, dropToMonsters };
 }
 
-// ============ 敌人刷新机制（数据文件驱动，不在配置界面暴露） ============
-
-/**
- * 读取 assets/敌人刷新规则.txt
- * 每行格式: 刷新机制: 关键词 关键词 ...
- * 关键词与怪物名做“包含”匹配，按文件中出现的顺序逐行匹配，先命中者生效；
- * 关键词写“默认”表示兜底规则（匹配所有怪物）。
- */
 function loadEnemyRefreshRules() {
     const rules = [];
     try {
@@ -1781,17 +1522,12 @@ function getEnemyRefreshMode(monsterName) {
     return fallback ? fallback.cd : "每天4点";
 }
 
-// ============ 路线扫描与材料索引 ============
-
 function scanAndFilterJsonFiles(folderPath) {
     const jsonFiles = getFilesInAutoPathing(folderPath);
     jsonFiles.sort((a, b) => a.localeCompare(b, "zh", { numeric: true }));
     return jsonFiles;
 }
 
-/**
- * 构建“材料/怪物名 -> 路线路径”的索引
- */
 async function buildMaterialIndex() {
     const index = {};
 
@@ -1808,7 +1544,6 @@ async function buildMaterialIndex() {
         if (!entry.cdType) entry.cdType = getCdTypeOf(name, path);
     };
 
-    // 地方特产：路径形如 地方特产\国家\特产名\xxx.json
     let specialtyFiles = [];
     try {
         specialtyFiles = scanAndFilterJsonFiles("地方特产");
@@ -1822,7 +1557,6 @@ async function buildMaterialIndex() {
         if (specialty) addPath("地方特产", specialty, path);
     }
 
-    // 食材与炼金、矿物、敌人与魔物：路径形如 类别\名称\xxx.json
     const otherCategories = ["食材与炼金", "矿物", enemyCategory];
     for (const category of otherCategories) {
         let jsonFiles = [];
@@ -1834,7 +1568,7 @@ async function buildMaterialIndex() {
         }
         const grouped = await groupByMaterialName(jsonFiles);
         for (const [name, paths] of Object.entries(grouped)) {
-            // 魔晶矿需要与铁匠对话人工判定，暂不支持
+
             if (category === "矿物" && name === "魔晶矿") continue;
             for (const path of paths) addPath(category, name, path);
         }
@@ -1870,9 +1604,6 @@ async function groupByMaterialName(jsonFiles) {
     return materialPathMap;
 }
 
-/**
- * 输出可用材料名单，方便没有勾选界面时查询准确的名称
- */
 function writeMaterialListFile(index) {
     const groups = {};
     for (const entry of Object.values(index)) {
@@ -1901,7 +1632,7 @@ function writeMaterialListFile(index) {
     }
     try {
         const content = lines.join("\n");
-        // 内容没变化就不重写，减少每次运行的磁盘写入
+
         if (!file.IsExists("可选材料名单.txt") || readTextSync("可选材料名单.txt") !== content) {
             file.writeTextSync("可选材料名单.txt", content);
         }
@@ -1910,12 +1641,6 @@ function writeMaterialListFile(index) {
     }
 }
 
-// ============ 采集目标的解析与匹配 ============
-
-/**
- * 解析 材料名*数量+材料名*数量 格式
- * 数量留空表示不限制；名称后可加 #all 表示使用该材料的全部版本路线
- */
 function parseTargets(text) {
     if (!text) return [];
     const result = [];
@@ -1950,12 +1675,6 @@ function formatTarget(target) {
     return target.count === null ? target.name : `${target.name}*${target.count}`;
 }
 
-/**
- * 该条目“拾取到什么才算数”
- * - 普通材料: 拾取到的就是材料本身（个别材料如晶蝶拾到的是晶核）
- * - 怪物: 拾到它的任意一档掉落物都算一次
- * - 掉落物: 只认这一种掉落物
- */
 function countingNamesOfEntry(entryName, index) {
     const entry = index[entryName];
     const isEnemy = entry && entry.type.split("/").includes(enemyCategory);
@@ -1968,24 +1687,17 @@ function countingNamesOfEntry(entryName, index) {
     return [obtainedNameMap[entryName] || entryName];
 }
 
-/**
- * 精确匹配：原名、别名、完整路径的最后一段
- */
 function matchEntryStrict(name, index) {
     if (index[name]) return index[name];
 
     const alias = materialAliases[name];
     if (alias && index[alias]) return index[alias];
 
-    // 支持输入 "地方特产\须弥\沙脂蛹" 这类完整路径
     const lastSegment = name.split(/[\\/]+/).filter((s) => s).pop();
     if (lastSegment && lastSegment !== name && index[lastSegment]) return index[lastSegment];
     return null;
 }
 
-/**
- * 模糊匹配：唯一包含关系才算命中，多个候选时让用户补全名称
- */
 function matchEntryFuzzy(name, index) {
     const candidates = Object.keys(index).filter((key) => key.includes(name) || name.includes(key));
     if (candidates.length === 1) {
@@ -1998,9 +1710,6 @@ function matchEntryFuzzy(name, index) {
     return null;
 }
 
-/**
- * 把一个怪物名（可能来自掉落表，与文件夹名不同）找成实际路线条目
- */
 function monsterEntries(monsterName, index) {
     const result = [];
     const push = (name) => {
@@ -2017,19 +1726,13 @@ function monsterEntries(monsterName, index) {
     return result;
 }
 
-/**
- * 解析采集目标：先当材料/怪物名找，找不到再当掉落物名找对应怪物
- * 返回 { entries, countNames }
- * entries 为数组：一个掉落物可能由多种怪物掉落，每种怪物单独处理各自的路线版本
- */
 function resolveTarget(inputName, index) {
-    // 1. 材料名 / 怪物文件夹名（精确、别名、完整路径）
+
     const strict = matchEntryStrict(inputName, index);
     if (strict) {
         return { entries: [strict], countNames: countingNamesOfEntry(strict.name, index) };
     }
 
-    // 2. 掉落物名 -> 掉落它的怪物路线
     const monsters = dropToMonsters[inputName] ? Array.from(dropToMonsters[inputName]) : [];
     if (monsters.length > 0) {
         const matched = [];
@@ -2049,7 +1752,6 @@ function resolveTarget(inputName, index) {
         }
     }
 
-    // 3. 名称不完整时做唯一模糊匹配
     const fuzzy = matchEntryFuzzy(inputName, index);
     if (fuzzy) {
         return { entries: [fuzzy], countNames: countingNamesOfEntry(fuzzy.name, index) };
@@ -2063,12 +1765,6 @@ function resolveTarget(inputName, index) {
     return null;
 }
 
-/**
- * 选择要执行的路线（多版本物品与原版一致：在配置界面勾选版本）
- * - 勾选了版本 → 只跑勾选的版本
- * - 一个都没勾 → 只跑第一组（原版行为，不会把多套路线重复跑一遍）
- * - 目标名后加 #all → 跑全部版本
- */
 function pickRoutePaths(entry, target) {
     const groups = versionGroupsOf(entry);
     const keys = Object.keys(groups).sort((a, b) => a.localeCompare(b, "zh", { numeric: true }));
@@ -2096,9 +1792,6 @@ function pickRoutePaths(entry, target) {
     return paths;
 }
 
-/**
- * 读取配置界面里该物品勾选的版本（multi-checkbox: selectRoute_物品名）
- */
 function getSelectedVersionKeys(entry, keys) {
     const settingName = "selectRoute_" + entry.name;
     let value = null;
@@ -2117,7 +1810,7 @@ function getSelectedVersionKeys(entry, keys) {
             if (!result.includes(name)) result.push(name);
             continue;
         }
-        // 路线版本目录改名后，用包含匹配兜底
+
         const fuzzy = keys.filter((key) => key.includes(name) || name.includes(key));
         for (const key of fuzzy) {
             if (!result.includes(key)) result.push(key);
@@ -2126,12 +1819,8 @@ function getSelectedVersionKeys(entry, keys) {
     return result.sort((a, b) => a.localeCompare(b, "zh", { numeric: true }));
 }
 
-/**
- * 按“材料目录下一级的子目录”把路线分成若干版本组
- * 组名即子目录名（如 "1. 高成功率路线"、"效率版@Tool_tingsu"），直接放在材料目录下的路线归到 "(本目录)"
- * 版本目录里若还有更深的子目录（如 水晶块的 璃月/纳塔），都算同一版本的路线
- */
 function versionGroupsOf(entry) {
+    // 材料目录下一级子目录就算一个版本
     const groups = {};
     for (const path of entry.paths) {
         const dir = path.substring(0, path.lastIndexOf("\\"));
@@ -2148,22 +1837,14 @@ function sortRoutesInOrder(paths) {
     return [...paths].sort((a, b) => basename(a).localeCompare(basename(b), "zh", { numeric: true }));
 }
 
-// ============ 运行记录 ============
-
 function recordSlugOf(jsonPath) {
     const parts = jsonPath.split("\\");
     const dirPath = parts.slice(0, parts.length - 1).join("\\");
     return dirPath.replace(/[^\u4e00-\u9fa5\w]+/g, "_");
 }
 
-// 记录放在 C:\采集CD管理配置文件\record\<账号>\<路线目录>.txt，不跟脚本目录混在一起
 function recordPathOf(jsonPath) {
     return recordRoot + "\\" + account + "\\" + recordSlugOf(jsonPath) + ".txt";
-}
-
-// 旧版本的记录位置（脚本目录 record/），只用于第一次自动迁移
-function legacyRecordPathOf(jsonPath) {
-    return legacyRecordRoot + "/" + account + "/" + recordSlugOf(jsonPath) + ".txt";
 }
 
 function loadRecord(recordFile) {
@@ -2177,7 +1858,7 @@ function loadRecord(recordFile) {
             log.debug("读取运行记录失败: {0}", e.toString());
         }
     } else {
-        // 旧记录自动搬一次，避免升级后 CD 全丢
+
         try {
             const legacy = recordFile.replace(recordRoot + "\\", legacyRecordRoot + "/").replace(/\\/g, "/");
             if (file.isExists(legacy)) {
@@ -2217,15 +1898,11 @@ function setNextRefreshTime(jsonPath, refreshTime) {
     file.writeTextSync(recordFile, lines.join("\n"));
 }
 
-/**
- * 每条路线开始执行时发一次通知（与 背包材料统计 一致的 notification.Send）
- * 目标显示用户实际填的名字（填掉落物就显示掉落物，填怪物才显示怪物）
- */
 function notifyRouteStart(targetName, pathName, remain, routeMaterial) {
     if (!cfg.routeNotify) return;
-    // 没填采集目标（按顺序跑全部路线）时，目标直接显示“无”
+
     let target = targetName || "无";
-    // 填的是掉落物时，补一句实际要跑哪只怪的路线，方便对照
+
     if (targetName && routeMaterial && targetName !== routeMaterial) target += `（路线: ${routeMaterial}）`;
     let msg = `当前执行路径：${pathName}\n目标：${target}`;
     if (remain !== null && remain !== undefined) msg += `（剩余 ${remain}）`;
@@ -2240,8 +1917,6 @@ function notifyRouteStart(targetName, pathName, remain, routeMaterial) {
         log.debug("发送路线通知失败: {0}", e.toString());
     }
 }
-
-// ============ 单个目标的执行 ============
 
 async function runTarget(target, index) {
     const resolved = resolveTarget(target.name, index);
@@ -2269,7 +1944,6 @@ async function runTarget(target, index) {
         log.warn("{0} 无法按拾取物品计数，本次数量按“完成一条路线计1”统计", target.name);
     }
 
-    // 悬浮窗：切到当前目标
     statusState.active = true;
     statusState.material = entries[0] ? entries[0].name : target.name;
     statusState.targetName = target.name;
@@ -2302,7 +1976,6 @@ async function runTarget(target, index) {
                 state.remain === null ? "" : `，目标 ${state.remain} 个`
             );
 
-            // 先筛选当前可执行的路线，按文件名顺序（01→02→03…）执行；全部在CD时直接跳过，不浪费时间切队伍
             const available = sortRoutesInOrder(paths.filter((p) => Date.now() > getNextRefreshTime(p)));
             if (available.length === 0) {
                 log.info("{0}的路线全部处于CD中，跳过，采集下一个", entry.name);
@@ -2345,7 +2018,7 @@ async function runTarget(target, index) {
                 log.debug("结束拾取识别任务时出错: {0}", e.toString());
             }
         }
-        // 即使中途因停止时间/用户取消而退出，也要把剩余数量写回配置，避免重复采集
+
         if (state.remain !== null) {
             if (state.picked.length > 0) {
                 log.info("【{0}】本次实际拾取 {1} 个: {2}", target.name, state.picked.length, summarizePicked(state.picked));
@@ -2376,19 +2049,11 @@ function summarizePicked(picked) {
         .join("、");
 }
 
-/**
- * 记下每个目标的剩余数量，脚本结束时统一回写一次配置
- * （BGI 的配置界面在脚本运行期间不会刷新，逐次写入也没意义，还会多一次无谓的写）
- */
 function rememberRemain(target, remain) {
     if (!target || target.count === null) return;
     pendingRemains[target.name] = Math.max(0, remain);
 }
 
-/**
- * 脚本结束（含中途被停止）时把剩余数量写回配置文本，采完的目标项直接移除
- */
-/** 打开面板前先把内存中未落盘的剩余数量写进配置文件（写失败只记日志，不阻止打开） */
 function syncTargetRemainBeforePanel() {
     try {
         if (Object.keys(pendingRemains).length > 0) {
@@ -2424,20 +2089,16 @@ function flushTargetItems() {
     pendingRemains = {};
 }
 
-// ============ 单条路线的执行 ============
-
 async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) {
-    // 每条路线开始前先过暂停检查：面板开着就停在这，改完配置点「开始执行」再按新配置重来
     await waitBeforeNextRoute();
     const fileName = basename(jsonPath);
     const pathName = fileName.split(".")[0];
     const isEnemyRoute = jsonPath.split("\\")[0] === enemyCategory;
     const animalRoute = isAnimalRoute(jsonPath);
     const miningRoute = jsonPath.split("\\")[0] === miningCategory;
-    // BGI 的 linnea_mining 动作（莉奈娅挖矿）必须当前队伍里有莉奈娅，不能用别的大剑/岩系顶替
+    // linnea_mining 只有莉奈娅本人能放
     const linneaMiningRoute = miningRoute && scanRouteActionSet(jsonPath).includes(linneaMiningAction);
 
-    // 上一条是纯战斗路线（人还站在战斗队伍）→ 采集路线开始前切回主采集队伍，采集全程用采集队伍
     if (!isEnemyRoute && cfg.partyNameCombat && currentParty === cfg.partyNameCombat && cfg.partyName && worldInfo && !worldInfo.coOpMode) {
         log.debug("采集中：从战斗队伍切回采集队伍{0}", cfg.partyName);
         const backResult = await withTimeout(switchPartySafely(cfg.partyName), 90000, "切回采集队伍");
@@ -2450,7 +2111,6 @@ async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) 
         }
     }
 
-    // 敌人路线依赖自动战斗，如设置了战斗队伍则先切换
     if (isEnemyRoute && cfg.partyNameCombat && worldInfo && !worldInfo.coOpMode && currentParty !== cfg.partyNameCombat) {
         log.debug("该路线为战斗路线，切换到战斗队伍{0}", cfg.partyNameCombat);
         const combatResult = await withTimeout(switchPartySafely(cfg.partyNameCombat), 90000, "切换战斗队伍");
@@ -2463,7 +2123,6 @@ async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) 
         if (combatTeleported) currentMap = "Teyvat";
     }
 
-    // 队伍采集能力判定
     if (!(currentParty in partyAbility)) {
         partyAbility[currentParty] = calculateAvatarsAbility(getAvatars());
     }
@@ -2502,18 +2161,15 @@ async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) 
         }
     }
 
-    // 食材打动物 / 挖矿：按配置优先挑一支合适的采集队伍（在能力判定之后，避免被能力判定覆盖）
     if (!isEnemyRoute && worldInfo && !worldInfo.coOpMode) {
         if (animalRoute) {
             await ensurePartyWithChars(nonScaringCharacters(), "食材打动物");
         } else if (miningRoute) {
-            // 莉奈娅挖矿路线只认莉奈娅；普通矿物路线按“挖矿角色优先级”挑
+
             await ensurePartyWithChars(miningPreferredChars(jsonPath), linneaMiningRoute ? "莉奈娅挖矿" : "挖矿");
         }
     }
 
-    // 行走位 / 回血位：脚本自己的配置，不写进 BGI 自带的队伍行走/回血设置（每支队伍不一样）
-    // 打动物 / 抓晶蝶只切队伍、不改行走位（该被动在队伍里就生效，前台是谁无所谓）
     const assistCfg = getPartyAssistConfig(currentParty);
     let walkSlot = assistCfg.walkSlot;
     if (miningRoute) {
@@ -2538,8 +2194,6 @@ async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) 
     const pathStartPos = startPosResult.ok ? startPosResult.value : null;
     const pathStartTime = new Date();
 
-    // 回血位轮询：冷却好了就切回血位放技能，放完切回行走位
-    // 采集队伍和战斗队伍都可以配回血位（战斗队伍不配行走位）；联机模式不切角色，不启用
     const healEnabled = !!assistCfg.healSlot && !(worldInfo && worldInfo.coOpMode);
     const healState = { running: healEnabled, lastCast: 0 };
     if (healState.running) {
@@ -2550,13 +2204,12 @@ async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) 
 
     panelService.routeRunning = true;
     panelService.abortedRoute = false;
-    const pathPromise = runPathScriptFile(jsonPath)
+    const pathPromise = pathingScript.runFileFromUser(jsonPath)
         .then((value) => ({ error: null, value: value }))
         .catch((e) => ({ error: e && e.message ? e.message : e.toString(), value: null }));
 
-    // 卡死脱离/重试由 BGI 自带逻辑处理；脚本只负责“被停止就立刻结束”，不设路径超时（长路线几十分钟很正常）
     const outcome = await racePathOutcome(pathPromise);
-    // 路径已结束，停掉回血轮询，避免收尾阶段乱切角色
+
     healState.running = false;
 
     if (outcome.kind === "cancel") {
@@ -2566,13 +2219,11 @@ async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) 
 
     const pathError = outcome.result.error;
 
-    // 被停止时不要做任何界面操作，直接结束脚本（和其它脚本一致：F10 立刻结束）
     if ((pathError && isUserCancelMessage(pathError)) || isTaskCancelled()) {
         logFakePathEnd(fileName, pathStart);
         throw new UserCancelled(pathError || "任务已被停止");
     }
 
-    // 执行中打开过配置面板：这条路线按“中断”处理，不记 CD、不扣数量，也不拿它的坐标去估算刷新
     if (panelService.abortedRoute) {
         panelService.abortedRoute = false;
         log.info("{0}: 因打开配置面板中断，本条不记 CD、不扣采集数量", pathName);
@@ -2580,7 +2231,6 @@ async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) 
         return { moved: false, aborted: true };
     }
 
-    // 路线本身报错：跳过这条并记录CD，继续跑后面的路线
     if (pathError) {
         const refreshTime = calculateNextRefreshTime(new Date(), cdType);
         setNextRefreshTime(jsonPath, refreshTime);
@@ -2605,6 +2255,7 @@ async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) 
     }
 
     if (distance >= 5) {
+        // 位移太小说明路线没真正跑起来，不记 CD
         try {
             const jsonData = readRouteJson(jsonPath);
             const jsonRegion = jsonData.info?.map_name || "Teyvat";
@@ -2626,7 +2277,7 @@ async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) 
     } finally {
         panelService.routeRunning = false;
         healState.running = false;
-        // 路径已结束：如果用户在执行中按过 F7/点过配置按钮，此刻再把面板打开，避免路径途中被抢焦点
+
         if (panelService.pendingOpen && !panelService.panelId) {
             panelService.pendingOpen = false;
             panelService.openRequested = true;
@@ -2634,14 +2285,6 @@ async function runOneRoute(materialName, jsonPath, cdType, remain, displayName) 
     }
 }
 
-async function runPathScriptFile(jsonPath) {
-    await pathingScript.runFileFromUser(jsonPath);
-    return false;
-}
-
-/**
- * 路线 json 读取带缓存：同一路线在一次运行里可能被解析多次（所需角色、地图区域），避免重复读盘
- */
 const routeJsonCache = {};
 function readRouteJson(jsonPath) {
     if (routeJsonCache[jsonPath]) return routeJsonCache[jsonPath];
@@ -2654,10 +2297,6 @@ function isUserCancelMessage(message) {
     return /取消|停止|中止|取消任务|cancel|stopped|abort/i.test(String(message || ""));
 }
 
-/**
- * 等待路径追踪结果，只盯一件事：BGI 取消令牌（用户按“结束任务”快捷键 / BGI 停止任务）
- * 路线跑多久都不管（一条龙路线几十分钟很正常）；卡死脱离、重试、放弃此路线交给 BGI 自带逻辑
- */
 async function racePathOutcome(pathPromise) {
     let finished = false;
     const monitor = (async () => {
@@ -2671,8 +2310,6 @@ async function racePathOutcome(pathPromise) {
     finished = true;
     return outcome;
 }
-
-// ============ 角色能力与联机信息 ============
 
 function scanSpecialCollectMethod(jsonFiles) {
     const actions = jsonFiles.flatMap((filePath) => {
@@ -2709,13 +2346,10 @@ function calculateAvatarsAbility(avatars) {
     return [...abilitySet];
 }
 
-// ============ 食材打动物自动选队 + 行走位 / 回血位 ============
-
-// 默认不惊动小动物的角色：埃洛伊/绮良良管禽肉·兽肉·冷鲜肉，早柚/瑶瑶管晶蝶等「其他」小动物
 const defaultNonScaringChars = "埃洛伊,绮良良,早柚,瑶瑶";
-// 食材路线里出现这些动作说明要打动物
+
 const animalRouteActions = ["fight", "combat_script"];
-// 晶蝶/晶核路线多数动作是空的（只跑图+自动拾取），按路径名认
+
 const critterPathKeywords = ["晶蝶", "晶核"];
 const healHoldMs = 1200;
 const routeActionsCache = {};
@@ -2741,16 +2375,6 @@ function safeGetAvatars() {
     }
 }
 
-/**
- * 在当前队伍里找“不惊动小动物”的角色，返回数字键槽位（1-4），没有则返回 null
- */
-function findNonScaringSlot(avatars) {
-    return findCharacterSlot(nonScaringCharacters(), avatars);
-}
-
-/**
- * 在当前队伍里找列表中的任一角色，返回数字键槽位（1-4），没有则返回 null
- */
 function findCharacterSlot(names, avatars) {
     const list = avatars || safeGetAvatars();
     for (let i = 0; i < list.length; i++) {
@@ -2759,9 +2383,6 @@ function findCharacterSlot(names, avatars) {
     return null;
 }
 
-/**
- * 默认可挖矿角色：大剑角色（assets/挖矿角色.txt，可自行增删）+ 岩元素角色
- */
 function defaultMiningCharacters() {
     const list = [];
     try {
@@ -2783,26 +2404,17 @@ function defaultMiningCharacters() {
     return [...new Set(list)];
 }
 
-/**
- * 挖矿角色优先级：配置里填了就只用填的角色；留空则用默认（大剑 + 岩系）
- */
 function miningPriorityCharacters() {
     const typed = splitNames(cfg.miningCharNames);
     return typed.length > 0 ? typed : defaultMiningCharacters();
 }
 
-/**
- * 这条路线的挖矿角色：带 linnea_mining 动作的只认莉奈娅，其余按“挖矿角色优先级”
- */
 function miningPreferredChars(jsonPath) {
     const actions = scanRouteActionSet(jsonPath);
     if (actions.includes(linneaMiningAction)) return [linneaMiningChar];
     return miningPriorityCharacters();
 }
 
-/**
- * 已配置的采集队伍名单（主 → 备选 → 第三支），战斗队伍不在其中
- */
 function configuredParties() {
     const list = [cfg.partyName, cfg.partyName2nd, cfg.partyName3rd]
         .map((s) => String(s || "").trim())
@@ -2810,17 +2422,10 @@ function configuredParties() {
     return [...new Set(list)];
 }
 
-/**
- * 除当前队伍外，其它可切换的采集队伍（按配置顺序）
- */
 function partyCandidates(partyName) {
     return configuredParties().filter((p) => p !== partyName);
 }
 
-/**
- * 按队伍取行走位 / 回血位配置（主 Main / 备选 Second / 第三支 Third / 战斗 Combat）
- * 战斗队伍不配行走位（走位无所谓），只配回血位
- */
 function getPartyAssistConfig(partyName) {
     let key = "Main";
     if (cfg.partyName2nd && partyName === cfg.partyName2nd) key = "Second";
@@ -2836,7 +2441,7 @@ function getPartyAssistConfig(partyName) {
     if (!isFinite(cdSec) || cdSec <= 0) cdSec = 8;
     if (cdSec < 1) cdSec = 1;
     return {
-        // 战斗队伍不配行走位：不需要在开跑时按数字键，回血后也不用切回去
+
         walkSlot: key === "Combat" ? null : toSlot(cfg["walkSlot" + key]) || 1,
         healSlot: toSlot(cfg["healSlot" + key]),
         skill: skill,
@@ -2856,9 +2461,6 @@ function scanRouteActionSet(jsonPath) {
     return routeActionsCache[jsonPath];
 }
 
-/**
- * 需要“不惊动小动物”角色的路线：食材与炼金里打动物的（fight/combat_script），以及晶蝶/晶核路线
- */
 function isAnimalRoute(jsonPath) {
     if (jsonPath.split("\\")[0] !== "食材与炼金") return false;
     const pathText = jsonPath.replace(/\\/g, "/");
@@ -2867,11 +2469,6 @@ function isAnimalRoute(jsonPath) {
     return animalRouteActions.some((a) => actions.includes(a));
 }
 
-/**
- * 按角色名单挑采集队伍：当前队伍里有就直接用，没有就按 主 → 备选 → 第三支 依次切过去试
- * @param {string[]} chars 目标角色名
- * @param {string} scene 日志里用的场景名（食材打动物 / 挖矿）
- */
 async function ensurePartyWithChars(chars, scene) {
     const names = chars || [];
     if (names.length === 0) return null;
@@ -2908,16 +2505,13 @@ async function ensurePartyWithChars(chars, scene) {
     return null;
 }
 
-/**
- * 回血位轮询：冷却好了就切回血位放技能，放完切回行走位；路线结束/停止即退出
- */
 function startHealWatcher(state, walkSlot, cfg) {
     const task = (async () => {
         try {
             while (state.running) {
                 await sleep(1000);
                 if (!state.running || isTaskCancelled()) break;
-                // 面板打开（脚本暂停）期间不抢着回血/切人，避免在用户改配置时乱动
+
                 if (panelService.abortedRoute || panelService.stopRequested) continue;
                 if (!cfg.healSlot || !cfg.skill) continue;
                 if (Date.now() - state.lastCast < cfg.cdMs) continue;
@@ -2975,10 +2569,9 @@ async function getCoOpModeAndHostUid() {
     checkStop("关闭好友界面");
     await withTimeout(genshin.returnMainUi(), 6000, "回到主界面");
     const rawUid = String(uid || "").trim();
-    // 只认 9 位纯数字 UID；OCR 失败/返回占位文本一律视为没读到
+
     const validUid = /^\d{9}$/.test(rawUid);
     const maskUid = validUid ? rawUid.replace(/\d\d(\d{3})\d{4}/, (match, group1) => match.replace(group1, "xxx")) : "";
     return { coOpMode: coOpMode, uid: validUid ? rawUid : "", maskUid: maskUid };
 }
-
 
